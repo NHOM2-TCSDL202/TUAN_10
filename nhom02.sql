@@ -1,8 +1,8 @@
 ﻿--Kiểm tra xem database đã tồn tại hay chưa, tồn tại thì xóa
-IF EXISTS (SELECT * FROM sys.databases WHERE name = N'Nhom2new')
+IF EXISTS (SELECT * FROM sys.databases WHERE name = N'Nhom2')
 BEGIN
     -- Đóng tất cả các kết nối đến cơ sở dữ liệu
-    EXECUTE sp_MSforeachdb 'IF ''?'' = ''Nhom2new'' 
+    EXECUTE sp_MSforeachdb 'IF ''?'' = ''Nhom2'' 
     BEGIN 
         DECLARE @sql AS NVARCHAR(MAX) = ''USE [?]; ALTER DATABASE [?] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;''
         EXEC (@sql)
@@ -11,15 +11,15 @@ BEGIN
     USE master;
 
     -- Xóa cơ sở dữ liệu nếu tồn tại
-    DROP DATABASE Nhom2new;
+    DROP DATABASE Nhom2;
 END
 
 -- Tạo cơ sở dữ liệu mới
-CREATE DATABASE Nhom2new;
+CREATE DATABASE Nhom2;
 GO
 
 -- Sử dụng cơ sở dữ liệu vừa tạo
-USE Nhom2new;
+USE Nhom2;
 GO
 
 -- Tạo bảng QuocGia
@@ -144,7 +144,7 @@ CREATE TABLE CHITIETDATHANG
     SOLUONG INT null DEFAULT 1 CHECK (SOLUONG > 0),
     MUCGIAMGIA MONEY null DEFAULT 0,
     PRIMARY KEY (SOHOADON, MAHANG),
-    CONSTRAINT fk_CHITIETDATHANG_DONDATHANG FOREIGN KEY (SOHOADON) REFERENCES DONDATHANG(SOHOADON) ,
+    CONSTRAINT fk_CHITIETDATHANG_DONDATHANG FOREIGN KEY (SOHOADON) REFERENCES DONDATHANG(SOHOADON),
     CONSTRAINT fk_CHITIETDATHANG_MATHANG FOREIGN KEY (MAHANG) REFERENCES MATHANG(MAHANG)
 );
 
@@ -552,7 +552,7 @@ WHERE
 /*Câu 1: Tạo thủ tục lưu trữ để thông qua thủ tục này có thể bổ sung thêm một bản ghi mới cho bảng MATHANG 
 (thủ tục phải thực hiện kiểm tra tính hợp lệ của dữ liệu cần bổ sung: không trùng khoá chính và đảm bảo toàn vẹn tham chiếu) */
 GO
-CREATE PROCEDURE ThemMatHang
+CREATE PROCEDURE AddNewMatHang
     @MAHANG CHAR(5),
     @TENHANG NVARCHAR(50),
     @MACONGTY CHAR(10),
@@ -590,7 +590,7 @@ BEGIN
     PRINT N'Bản ghi mới đã được thêm thành công.';
 END;
 GO
-EXEC ThemMatHang 
+EXEC AddNewMatHang 
     @MAHANG = 'MH006', 
     @TENHANG = N'Sản phẩm MINI', 
     @MACONGTY = 'CT00000005', 
@@ -598,11 +598,9 @@ EXEC ThemMatHang
     @SOLUONG = 200, 
     @DONVITINH = N'Hộp', 
     @GIAHANG = 750000;
+--SELECT * FROM MATHANG
 
-SELECT * FROM MATHANG
-
-/*Câu 2: Tạo thủ tục lưu trữ có chức năng thống kê tổng số lượng hàng bán được của một mặt hàng
-có mã bất kỳ (mã mặt hàng cần thống kê là tham số của thủ tục). */
+/*Câu 2: Tạo thủ tục lưu trữ có chức năng thống kê tổng số lượng hàng bán được của một mặt hàng có mã bất kỳ (mã mặt hàng cần thống kê là tham số của thủ tục). */
 GO
 ALTER TABLE DONDATHANG
 ADD TRANGTHAIDONHANG NVARCHAR(30);
@@ -630,124 +628,12 @@ END
 GO
 
 EXEC pr_ThongKeSoLuongHangBanDuoc @MaHang = N'MH002';
+--4) Viết trigger cho bảng CHITIETDATHANG theo yêu cầu sau:
 
-/*Câu 3: Viết hàm trả về một bảng trong đó cho biết tổng số lượng hàng bán được của mỗi mặt hàng. 
-Sử dụng hàm này để thống kê xem tổng số lượng hàng (hiện có và đã bán) của mỗi mặt hàng là bao nhiêu.*/
-go
-CREATE FUNCTION fn_SoLuongHang()
-RETURNS TABLE
-AS
-RETURN 
-(
-    SELECT 
-        m.MAHANG, 
-        m.TENHANG,
-        ISNULL(SUM(c.SOLUONG), 0) AS SOLUONGDABAN, 
-        MAX(m.SOLUONG) AS SOLUONGTRONGKHO, 
-        MAX(m.SOLUONG) - ISNULL(SUM(c.SOLUONG), 0) AS SOLUONGHIENCON
-    FROM 
-        MATHANG m
-    LEFT JOIN CHITIETDATHANG as c on c.MAHANG=m.MAHANG
-    GROUP BY m.MAHANG, m.TENHANG
-)
-go
-SELECT * FROM fn_SoLuongHang()
-
---Câu 4: Viết trigger cho bảng CHITIETDATHANG theo yêu cầu sau:
-/*a) Khi một bản ghi mới được bổ sung vào bảng này thì giảm số lượng hàng hiện có 
-nếu số lượng hàng hiện có lớn hơn hoặc bằng số lượng hàng được bán ra. 
-Ngược lại thì huỷ bỏ thao tác bổ sung*/
-GO
-CREATE TRIGGER trg_InsertChiTietDatHang
-ON CHITIETDATHANG
-INSTEAD OF INSERT
-AS
-BEGIN
-    DECLARE @MAHANG CHAR(5), @SOLUONG INT;
-
-    -- Lấy giá trị từ bản ghi mới
-    SELECT @MAHANG = MAHANG, @SOLUONG = SOLUONG FROM inserted;
-
-    -- Kiểm tra số lượng hàng hiện có
-    DECLARE @SoLuongHienCo INT;
-    SELECT @SoLuongHienCo = SOLUONG FROM MATHANG WHERE MAHANG = @MAHANG;
-
-    -- Nếu số lượng hàng hiện có lớn hơn hoặc bằng số lượng bán ra
-    IF @SoLuongHienCo >= @SOLUONG
-    BEGIN
-        -- Giảm số lượng hàng hiện có
-        UPDATE MATHANG
-        SET SOLUONG = SOLUONG - @SOLUONG
-        WHERE MAHANG = @MAHANG;
-
-        -- Thêm bản ghi mới vào bảng CHITIETDATHANG
-        INSERT INTO CHITIETDATHANG (SOHOADON, MAHANG, GIABAN, SOLUONG, MUCGIAMGIA)
-        SELECT SOHOADON, MAHANG, GIABAN, SOLUONG, MUCGIAMGIA FROM inserted;
-    END
-    ELSE
-    BEGIN
-        -- Huỷ bỏ thao tác bổ sung
-        PRINT N'Thao tác bổ sung bị huỷ bỏ: Số lượng hàng bán ra vượt quá số lượng hiện có!';
-    END
-END;
-GO
-CREATE TRIGGER trg_DeleteChiTietDatHang
-ON CHITIETDATHANG
-AFTER DELETE
-AS
-BEGIN
-    -- Khôi phục số lượng hàng trong bảng MATHANG
-    UPDATE MATHANG
-    SET SOLUONG = MATHANG.SOLUONG + d.SOLUONG
-    FROM deleted d
-    WHERE MATHANG.MAHANG = d.MAHANG;
-END;
-GO
-
-CREATE TRIGGER trg_DeleteDonDatHang
-ON DONDATHANG
-AFTER DELETE
-AS
-BEGIN
-    -- Khôi phục số lượng hàng trong bảng MATHANG từ CHITIETDATHANG
-    UPDATE MATHANG
-    SET SOLUONG = MATHANG.SOLUONG + c.SOLUONG
-    FROM deleted d
-    JOIN CHITIETDATHANG c ON d.SOHOADON = c.SOHOADON
-    WHERE MATHANG.MAHANG = c.MAHANG;
-END;
-GO
-select * from MATHANG
-select * from DONDATHANG
-select* from CHITIETDATHANG
-
---thực thi a
-INSERT INTO DONDATHANG (SOHOADON, MAKHACHHANG, MANHANVIEN, NGAYDATHANG, NGAYCHUYENHANG, NGAYGIAOHANG, maPX, soNhaTenDuong)
-VALUES ('HD0000006', 'KH0000005', 'NV0000001', GETDATE(), GETDATE() + 1, GETDATE() + 3, 'PX00000004', N'24 Quang Trung');
-INSERT INTO CHITIETDATHANG (SOHOADON, MAHANG, GIABAN, SOLUONG, MUCGIAMGIA)
-VALUES ('HD0000006', 'MH001', 100000, 5, 1000);
- -- bổ sung 
- ALTER TABLE CHITIETDATHANG
-DROP CONSTRAINT fk_CHITIETDATHANG_DONDATHANG;
-
-ALTER TABLE CHITIETDATHANG
-ADD CONSTRAINT fk_CHITIETDATHANG_DONDATHANG FOREIGN KEY (SOHOADON) 
-REFERENCES DONDATHANG(SOHOADON) ON DELETE CASCADE;
-/*
--- Xóa chi tiết đơn hàng
-DELETE FROM CHITIETDATHANG
-WHERE SOHOADON = 'HD0000006';
- */
--- Xóa đơn hàng
-GO
-DELETE FROM DONDATHANG
-WHERE SOHOADON = 'HD0000006'; 
-
-/*b) Khi cập nhật lại số lượng hàng được bán, kiểm tra số lượng hàng được cập nhật lại có phù hợp hay không 
-(số lượng hàng bán ra không được vượt quá số lượng hàng hiện có và không được nhỏ hơn 1). 
-Nếu dữ liệu hợp lệ thì giảm (hoặc tăng) số lượng hàng hiện có trong công ty, 
-ngược lại thì huỷ bỏ thao tác cập nhật.*/
-go
+--•	Khi cập nhật lại số lượng hàng được bán, kiểm tra số lượng hàng được cập nhật lại có phù hợp hay không 
+--(số lượng hàng bán ra không được vượt quá số lượng hàng hiện có và không được nhỏ hơn 1). Nếu dữ liệu hợp lệ thì giảm (hoặc tăng) 
+--số lượng hàng hiện có trong công ty, ngược lại thì huỷ bỏ thao tác cập nhật. 
+drop trigger AFTER_UPDATE_CHITIETDATHANG
 create trigger UPDATE_CHITIETDATHANG
 on CHITIETDATHANG
 instead of update
@@ -780,11 +666,10 @@ begin
 		MATHANG.MAHANG = d.MAHANG
 
 end
-go
+
 select * from CHITIETDATHANG
 select * from MATHANG
 
 update CHITIETDATHANG
 set SOLUONG = 60
 where SOHOADON = 'HD0000001'
-
